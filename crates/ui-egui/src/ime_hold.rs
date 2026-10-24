@@ -4,7 +4,7 @@
 //! another. When that happens while the input method (fcitx, ibus) is still handling a key, as when
 //! Esc ends the editing of a title or a field, the new context never receives a key again: typing
 //! stops working in every field until FilmCraft is restarted. So the input method stays on until
-//! no key is held and [`HOLD`] has passed since the last one, and is turned off then.
+//! no key is held and [`HOLD`] has passed since the last one came up, and is turned off then.
 
 use egui::output::IMEOutput;
 
@@ -16,8 +16,9 @@ pub(crate) struct ImeHold {
     /// Only an X11 window recreates its input context when the input method goes off; elsewhere
     /// (Wayland, macOS, Windows, tests) the output passes through untouched.
     pub(crate) on: bool,
-    /// The input method the last text asked for, and when it last did (or a key was last held).
-    last: Option<(IMEOutput, f64)>,
+    /// The input method the last text asked for, and when it was let go: the first frame on which
+    /// no text asked for it and no key was held (`None` while a text asks or a key is held).
+    last: Option<(IMEOutput, Option<f64>)>,
 }
 
 impl ImeHold {
@@ -26,19 +27,26 @@ impl ImeHold {
     /// again.
     pub(crate) fn apply(&mut self, ime: Option<IMEOutput>, now: f64, keys_down: bool) -> (Option<IMEOutput>, Option<f64>) {
         if let Some(ime) = ime {
-            self.last = Some((ime.clone(), now));
+            self.last = Some((ime.clone(), None));
             return (Some(ime), None);
         }
-        let Some((held, mut since)) = self.last.take() else { return (None, None) };
-        if keys_down || !now.is_finite() || !since.is_finite() {
-            since = now;
+        let Some((held, released)) = self.last.take() else { return (None, None) };
+        // no new composition is interrupted, and the reset already sent is not asked again:
+        // nothing is typed into it any more
+        let on = IMEOutput { should_interrupt_composition: false, reset_request: None, ..held.clone() };
+        if keys_down {
+            self.last = Some((held, None));
+            return (Some(on), Some(HOLD));
         }
-        let left = HOLD - (now - since);
-        if keys_down || left > 0.0 {
-            // no new composition is interrupted, and the reset already sent is not asked again:
-            // nothing is typed into it any more
-            let on = IMEOutput { should_interrupt_composition: false, reset_request: None, ..held.clone() };
-            self.last = Some((held, since));
+        // egui draws no frames while a key just stays down, so the time of the last frame that saw
+        // it held can be long before the release: the hold counts from the frame that saw it go
+        let released = match released {
+            Some(r) if r.is_finite() => r,
+            _ => now,
+        };
+        let left = HOLD - (now - released);
+        if left > 0.0 {
+            self.last = Some((held, Some(released)));
             (Some(on), Some(left.clamp(0.01, HOLD)))
         } else {
             (None, None)
@@ -78,10 +86,27 @@ mod tests {
         assert!(on.is_some_and(|i| !i.should_interrupt_composition), "held on, not restarted");
         assert!(again.is_some());
         assert!(h.apply(None, 2.0, true).0.is_some(), "as long as the key is held");
-        // released at 2.0: on until HOLD after that
-        assert!(h.apply(None, 2.0 + HOLD * 0.5, false).0.is_some());
-        assert_eq!(h.apply(None, 2.0 + HOLD + 0.01, false), (None, None));
+        // released at 2.1: on until HOLD after that
+        assert!(h.apply(None, 2.1, false).0.is_some());
+        assert!(h.apply(None, 2.1 + HOLD * 0.5, false).0.is_some());
+        assert_eq!(h.apply(None, 2.1 + HOLD + 0.01, false), (None, None));
         assert_eq!(h.apply(None, 9.0, false), (None, None), "and stays off");
+    }
+
+    #[test]
+    fn a_late_key_release_still_gets_the_whole_hold() {
+        let mut h = ImeHold::default();
+        h.apply(Some(ime()), 1.0, false);
+        // Esc ends the edit; no frame is drawn while it stays down
+        assert!(h.apply(None, 1.1, true).0.is_some());
+        // it comes up long after the last frame that saw it held
+        let released = 1.1 + HOLD * 3.0;
+        let (on, again) = h.apply(None, released, false);
+        assert!(on.is_some_and(|i| !i.should_interrupt_composition), "on at the release");
+        assert!(again.is_some_and(|s| (s - HOLD).abs() < 1e-9), "looks again after the whole hold");
+        assert!(h.apply(None, released + HOLD * 0.5, false).0.is_some());
+        assert!(h.apply(None, released + HOLD - 0.01, false).0.is_some(), "on for all of HOLD");
+        assert_eq!(h.apply(None, released + HOLD + 0.01, false), (None, None));
     }
 
     #[test]

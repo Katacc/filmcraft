@@ -48,6 +48,7 @@ pub mod graphics_notice;
 pub mod header;
 pub mod i18n;
 pub mod icons;
+mod ime_hold;
 mod ime_reset;
 pub mod links;
 pub mod menus;
@@ -218,6 +219,8 @@ pub struct FilmcraftApp {
     pub(crate) control_input_only: bool,
     /// Backend focus before synthetic input changes egui's effective focus for this frame.
     pub(crate) native_window_focused: Option<bool>,
+    /// Keeps the input method on a moment after a text lets go of it (X11 input context, see `ime_hold`).
+    ime_hold: ime_hold::ImeHold,
     /// Modifiers owned by an in-flight control gesture, carried between its input frames.
     synthetic_modifiers: egui::Modifiers,
     /// Requests waiting for the UI to show an element: (request, give-up time).

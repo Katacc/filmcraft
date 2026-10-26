@@ -18,6 +18,10 @@ struct Driver {
     shots: Option<std::path::PathBuf>,
     // Real Context output tokens, retained across later idle/control-channel frames.
     reset_requests: Vec<egui::ImeResetId>,
+    /// Frames that restarted an input method already on (`should_interrupt_composition` while the
+    /// frame before also had it on): the window then turns it off and on again.
+    ime_restarts: usize,
+    ime_on: bool,
 }
 
 impl Driver {
@@ -40,7 +44,7 @@ impl Driver {
             filmcraft_ui_egui::install_ime_reset_callbacks(&cc.egui_ctx);
             app
         });
-        let mut d = Driver { harness, tx, shots, reset_requests: Vec::new() };
+        let mut d = Driver { harness, tx, shots, reset_requests: Vec::new(), ime_restarts: 0, ime_on: false };
         d.frames(4);
         d
     }
@@ -56,6 +60,11 @@ impl Driver {
             if let Some(request) = self.harness.output().platform_output.ime.as_ref().and_then(|ime| ime.reset_request) {
                 self.reset_requests.push(request);
             }
+            let ime = self.harness.output().platform_output.ime.as_ref().map(|ime| ime.should_interrupt_composition);
+            if self.ime_on && ime == Some(true) {
+                self.ime_restarts += 1;
+            }
+            self.ime_on = ime.is_some();
         }
     }
 
@@ -1692,6 +1701,38 @@ fn invalid_gfx_edit_offsets_are_clamped() {
     assert!(d.ime().is_some(), "the clamped editor publishes");
     assert_eq!(caret(&d), (0, 2));
     assert_eq!(layer_texts(&mut d, clip), vec!["é😀".to_string()]);
+}
+
+/// While text is typed on the monitor the input method stays on and is not restarted: not on
+/// every frame (the text asked for the keyboard on each one, and each request restarts it), and not
+/// when an edit of a text already there starts (it was turned on, then restarted a frame later by
+/// the focus request). Each restart makes the window drop and recreate its X11 input context; with
+/// fcitx or ibus no key reached the title, and typing stayed broken until FilmCraft was restarted.
+#[test]
+fn typing_on_the_monitor_does_not_restart_the_input_method() {
+    let mut d = Driver::new();
+    d.ok("ui.set", json!({"tool": "Type"}));
+    d.frames(3);
+    let pic = d.rect("program.picture");
+    let (x, y) = (pic[0] + pic[2] * 0.3, pic[1] + pic[3] * 0.2);
+    d.ok("ui.click", json!({"x": x, "y": y}));
+    d.ok("ui.type", json!({"text": "Title"}));
+    d.frames(10);
+    assert!(d.ime_on, "the input method is on while the new title is typed");
+    assert_eq!(d.ime_restarts, 0, "typing a new title restarted the input method");
+    // stop, then click into the title again and go on typing
+    d.ok("ui.key", json!({"key": "Escape"}));
+    // the input method stays on a moment after the edit (crate::ime_hold), then goes off
+    d.frames(40);
+    assert!(!d.ime_on, "Esc ends the edit and then the input method");
+    d.ok("ui.click", json!({"x": x + 4.0, "y": y + 10.0}));
+    d.frames(10);
+    assert!(d.ime_on, "the input method is on again");
+    assert_eq!(d.ime_restarts, 0, "editing the title again restarted the input method");
+    d.harness.input_mut().events.push(egui::Event::Ime(egui::ImeEvent::Commit("!".into())));
+    d.frames(4);
+    let text = d.exec("graphics.list", json!({}))["layers"][0]["text"].clone();
+    assert!(text.as_str().is_some_and(|t| t.contains('!') && t.len() == 6), "{text}");
 }
 
 /// #2430: a click (no drag) in the text being edited on the monitor puts the caret there; before,

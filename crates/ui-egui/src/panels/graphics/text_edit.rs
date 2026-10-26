@@ -455,7 +455,12 @@ pub(super) fn text_edit(app: &mut FilmcraftApp, ui: &mut egui::Ui, v: &LayerView
         return;
     }
     ui.memory_mut(|m| {
-        m.request_focus(eid);
+        // only when it does not have it yet: every request also interrupts the input method, and
+        // asking each frame turned it off and on again 60 times a second, so with an X11 input
+        // method (fcitx, ibus) no key reached the text, and could stay lost after the edit
+        if !m.has_focus(eid) {
+            m.request_focus(eid);
+        }
         m.set_focus_lock_filter(eid, egui::EventFilter { tab: true, horizontal_arrows: true, vertical_arrows: true, escape: true });
     });
     let Some(tp) = text_of(&v.spec) else {

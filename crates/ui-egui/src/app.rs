@@ -67,6 +67,7 @@ impl FilmcraftApp {
             pending_panel_raise: None,
             control_input_only: false,
             native_window_focused: None,
+            ime_hold: Default::default(),
             synthetic_modifiers: egui::Modifiers::NONE,
             deferred: Vec::new(),
             ui_requests: Vec::new(),
@@ -128,6 +129,12 @@ impl FilmcraftApp {
             workspaces,
             menu_workspaces: Default::default(),
         }
+    }
+
+    /// The window is an X11 one: keep its input method on a moment after a text lets go of it
+    /// (see `ime_hold`).
+    pub fn set_x11_ime_hold(&mut self, on: bool) {
+        self.ime_hold.on = on;
     }
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
@@ -401,6 +408,8 @@ impl FilmcraftApp {
         // may have edited the text or replaced the target. Every other pass (hidden editor, focus
         // in another panel, no editor at all) turns the composer off.
         self.finish_ime_pass(&ctx);
+        // after the pass's input method output is final (`finish_ime_pass`)
+        self.ime_hold.hold(&ctx);
         // Ack `ui.*` waiters once the action had a final, non-discarded UI pass to apply in. Holding
         // them through a discard avoids reporting success for a pass egui threw away.
         if !ctx.will_discard() && self.synthetic.is_empty() && self.synthetic_pending_step.is_none() && !self.input_waiters.is_empty() {

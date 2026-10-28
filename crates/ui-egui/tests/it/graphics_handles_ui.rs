@@ -12,6 +12,7 @@ use filmcraft_ui_egui::FilmcraftApp;
 use filmcraft_ui_egui::control::ControlRequest;
 use serde_json::{Value, json};
 
+/// Drives a `FilmcraftApp` on the demo project through its control channel in an egui harness.
 struct Driver {
     harness: Harness<'static, FilmcraftApp>,
     tx: Sender<ControlRequest>,
@@ -21,14 +22,17 @@ struct Driver {
     /// Frames that restarted an input method already on (`should_interrupt_composition` while the
     /// frame before also had it on): the window then turns it off and on again.
     ime_restarts: usize,
+    /// The last frame asked the window for an input method.
     ime_on: bool,
 }
 
 impl Driver {
+    /// A driver on the demo project, with the app as it starts.
     fn new() -> Self {
         Self::new_with(|_| {})
     }
 
+    /// A driver on the demo project, after `configure` adjusts the app; four frames have run.
     fn new_with(configure: impl FnOnce(&mut FilmcraftApp)) -> Self {
         let mut s = Session::default();
         s.execute("file.openDemoProject", json!({})).unwrap();
@@ -49,6 +53,8 @@ impl Driver {
         d
     }
 
+    /// Run `n` frames, feeding queued control input through the input hook and recording each
+    /// frame's input method resets and restarts.
     fn frames(&mut self, n: usize) {
         for _ in 0..n {
             // the control channel's clicks and keys enter through the input hook

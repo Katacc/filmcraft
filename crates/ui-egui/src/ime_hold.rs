@@ -11,6 +11,7 @@ use egui::output::IMEOutput;
 /// How long the input method stays on after the text lets go of it and the keys are released.
 pub(crate) const HOLD: f64 = 0.3;
 
+/// The input method a text last asked for, held on after it lets go (see the module docs).
 #[derive(Default)]
 pub(crate) struct ImeHold {
     /// Only an X11 window recreates its input context when the input method goes off; elsewhere
@@ -72,10 +73,13 @@ impl ImeHold {
 mod tests {
     use super::*;
 
+    /// An input method a text asks for, restarting any composition (as a focus request does).
     fn ime() -> IMEOutput {
         IMEOutput { should_interrupt_composition: true, ..IMEOutput::new(egui::Id::NULL, 0, Default::default(), egui::Rect::ZERO, egui::Rect::ZERO) }
     }
 
+    /// Esc ends an edit with its key down: the input method stays on, unrestarted, until the key
+    /// has been up for [`HOLD`], then goes off.
     #[test]
     fn stays_on_while_a_key_is_held_and_a_moment_after() {
         let mut h = ImeHold::default();
@@ -93,6 +97,8 @@ mod tests {
         assert_eq!(h.apply(None, 9.0, false), (None, None), "and stays off");
     }
 
+    /// No frame is drawn while a key stays down, so the hold counts from the frame that sees the
+    /// release, not from the last one that saw the key held.
     #[test]
     fn a_late_key_release_still_gets_the_whole_hold() {
         let mut h = ImeHold::default();
@@ -109,6 +115,7 @@ mod tests {
         assert_eq!(h.apply(None, released + HOLD + 0.01, false), (None, None));
     }
 
+    /// A text that asks for the input method replaces the one held, and is the one held after.
     #[test]
     fn a_text_asking_again_takes_it_over() {
         let mut h = ImeHold::default();
@@ -119,6 +126,7 @@ mod tests {
         assert!(h.apply(None, 0.2, false).0.is_some_and(|i| i.rect == other.rect));
     }
 
+    /// A non-finite clock does not keep the input method on: the hold counts from a finite time.
     #[test]
     fn odd_clocks_do_not_hold_it_on_forever() {
         let mut h = ImeHold::default();

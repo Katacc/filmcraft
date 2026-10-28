@@ -137,6 +137,7 @@ impl FilmcraftApp {
         self.ime_hold.on = on;
     }
 
+    /// Take control-channel requests (`--control`, MCP) from `rx`, alongside native input.
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
